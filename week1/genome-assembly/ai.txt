@@ -1,0 +1,134 @@
+
+OpenAI. (2025). ChatGPT (Sep 15 version) [Large language model]. https://chat.openai.com/chat
+Prompt: """Can you tell me how to fix this error: dict.codon:8 (9-23): error: 'NoneType' object has no attribute '__hash__' ├─ dict.codon:258 (17-27): error: during the realization of _dict_hash(key: NoneType) ├─ dict.codon:88 (16-33): error: during the realization of _kh_get(self: Dict[NoneType,NoneType], key: NoneType) ├─ dbgc.py:77 (12-37): error: during the realization of __contains__(self: Dict[NoneType,NoneType], key: NoneType) ├─ dbgc.py:86 (16-37): error: during the realization of _add_node(self: DBG[int,Dict[NoneType,NoneType],int,Dict[NoneType,NoneType]], kmer: str) ├─ dbgc.py:65 (21-92): error: during the realization of _add_arc(self: DBG[int,Dict[NoneType,NoneType],int,Dict[NoneType,NoneType]], kmer1: str, kmer2: str) ├─ dbgc.py:53 (9-31): error: during the realization of _build(self: DBG[int,Dict[NoneType,NoneType],int,Dict[NoneType,NoneType]], data_list: List[List[str]]) ╰─ mainc.py:14 (11-54): error: during the realization of __init__(self: DBG[int,Dict[NoneType,NoneType],int,Dict[NoneType,NoneType]], k: int, data_list: List[List[str]])"""
+
+Answer:
+
+Nice — you’re getting the Codon-specific dict/NoneType failure. I’ll explain the root cause and give concrete fixes you can drop into your code (no back-and-forth questions — I’ll make reasonable assumptions and show safe options).
+
+What’s happening (short)
+
+Codon is telling you that None was used where a hashable dict key was required — and that the dict types were inferred as Dict[NoneType, NoneType]. Two likely problems (and both are common in Codon):
+
+You actually tried to use None as a dict key (e.g. some function returned None and you did d[key] or key in d). In CPython None is hashable, but Codon’s runtime/type inference here treats None as unhashable in that context and errors when realizing hash operations.
+
+Codon inferred the dict’s key/value types as NoneType because you created an empty dict ({}) without type annotations and Codon couldn't infer the intended types. That makes the dict type Dict[NoneType, NoneType] and then any real key (or internal hashing realization) triggers the error.
+
+Both show up in your trace (realization of _dict_hash(key: NoneType) and the stack through __contains__/_add_node/_add_arc/_build), so you need to both prevent None keys and give Codon explicit types for your dicts.
+
+Concrete fixes (apply one or all)
+A — Make sure keys are never None
+
+Add defensive checks before using a key:
+# before inserting/using key
+if kmer is None:
+    raise ValueError("kmer is None — unexpected; check input data")
+# or skip
+if kmer is None:
+    return
+
+Example where you add node:
+
+def _add_node(self, kmer: str) -> None:
+    if kmer is None:
+        raise ValueError("kmer is None in _add_node")
+    if kmer not in self.nodes:
+        self.nodes[kmer] = {}
+
+Add similar guards in _add_arc and other places that call kmer1, kmer2, etc.
+B — Give your dicts explicit types so Codon doesn't infer NoneType
+
+Codon needs explicit typing when you initialize empty containers. Use typing or builtin generic syntax:
+
+from typing import Dict, List
+
+class DBG:
+    def __init__(self, k: int, data_list: List[List[str]]) -> None:
+        self.k: int = k
+        # annotate node dicts: keys are strings, values are dicts or ints etc.
+        self.nodes: Dict[str, Dict[str, int]] = {}   # example
+        self.arcs: Dict[str, Dict[str, int]] = {}
+        # ... rest of init
+
+If your dict holds int counts keyed by string kmers:
+
+self.nodes: Dict[str, int] = {}
+
+If you use Python 3.9+ style:
+
+self.nodes: dict[str, int] = {}
+
+The important part: give the correct key/value types (e.g. str, int, or whatever your data are) instead of relying on {} alone.
+
+C — If you must allow an optional key type, use Optional[...] and guard
+
+If keys might legitimately be missing, type them as optional and avoid using None as the hash key:
+
+Quick checklist you can run now
+
+Search for {} initializations used for nodes, arcs, etc. Add type annotations on those assignments.
+
+Add if key is None: guards where keys are created or used.
+
+Add debug prints or raise exceptions where you first see suspect data from data_list.
+
+Recompile in Codon and follow the (now clearer) error if it still points to a place — you’ll either get the offending None location or a corrected realization of dict types.
+
+If you want, paste the relevant small snippets for __init__, _build, _add_node, and _add_arc (no need to paste the whole file) and I’ll give a line-by-line patch that you can copy into your code.
+
+------------------------------------------------------------------------------------------------
+
+Prompt 2: 
+
+OpenAI. (2025). ChatGPT (Sep 16 version) [Large language model]. https://chat.openai.com/chat
+Prompt: "I'm trying to use a bash script to run my python files. I'm getting this result: + echo 'Dataset Language Runtime N50' Dataset Language Runtime N50 + echo ------------------------------------------- ------------------------------------------- + printf 'data1 python time? ' data1 python time? + python genome-assembly/main.py data1 9990 But I want something more like: Dataset Language Runtime N50 -------------------------------------------- data1 python 0:20:00 9118 How can I get that result?"
+
+Got it — right now your script is just echoing things literally and then running Python, so the numbers don’t line up in a table. What you want is:
+
+A consistent tabular output (use printf instead of echo so you can format columns).
+
+A way to measure runtime (e.g., /usr/bin/time or date before/after).
+
+Capturing the N50 result from your Python script.
+
+Here’s one way to do it:
+
+#!/bin/bash
+
+# Print header
+printf "%-10s %-10s %-12s %-10s\n" "Dataset" "Language" "Runtime" "N50"
+echo "-----------------------------------------------------------"
+
+dataset="data1"
+
+# Record start time
+start=$(date +%s)
+
+# Run your Python script and capture N50 (last line of output)
+n50=$(python genome-assembly/main.py "$dataset")
+
+# Record end time and compute runtime
+end=$(date +%s)
+runtime=$(( end - start ))
+
+# Convert seconds to HH:MM:SS
+runtime_fmt=$(printf "%02d:%02d:%02d" $((runtime/3600)) $(( (runtime%3600)/60 )) $((runtime%60)) )
+
+# Print row
+printf "%-10s %-10s %-12s %-10s\n" "$dataset" "python" "$runtime_fmt" "$n50"
+
+Example output:
+
+Dataset    Language   Runtime      N50
+-----------------------------------------------------------
+data1      python     00:20:00     9118
+
+Notes
+
+    %-10s means: left-align string, width 10 characters. You can adjust widths so it looks nice.
+
+    If your Python script prints a lot and you only want the last line as N50, keep n50=$(python ... | tail -n 1).
+
+    If you want a more accurate timing, replace the manual date calls with /usr/bin/time -f "%E" (elapsed real time).
+
+Would you like me to show you the /usr/bin/time version (it directly gives you 0:20:00 style timing), or do you prefer the manual date arithmetic?
