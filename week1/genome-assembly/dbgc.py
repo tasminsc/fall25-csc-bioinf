@@ -1,6 +1,5 @@
+from typing import Set, Optional, Dict, List
 import copy
-from python import matplotlib.pyplot as plt
-from typing import Set, Optional
 
 def reverse_complement(key):
     complement = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G'}
@@ -11,13 +10,20 @@ def reverse_complement(key):
     return ''.join(key)
 
 class Node:
+    _children: Set[int]
+    _count: int
+    kmer: str
+    visited: bool
+    depth: int
+    max_depth_child: Optional[int]
+
     def __init__(self, kmer: str) -> None:
-        self._children = set()      # type: Set[int]
-        self._count = 0             # type: int
-        self.kmer = kmer            # type: str
-        self.visited = False        # type: bool
-        self.depth = 0              # type: int
-        self.max_depth_child = None # type: Optional[int]
+        self._children = set()
+        self._count = 0
+        self.kmer = kmer
+        self.visited = False
+        self.depth = 0
+        self.max_depth_child = None
 
     def add_child(self, kmer: int) -> None:
         self._children.add(kmer)
@@ -41,25 +47,28 @@ class Node:
         
 
 class DBG:
+    k: int
+    kmer_count: int
+    kmer2idx: Dict[str, int]   # keys are kmers (strings), values are ints
+    nodes: Dict[int, Node]
+
     def __init__(self, k: int, data_list: list[list[str]]) -> None:
-        self.k: int = k
-        from typing import Dict
-        self.nodes: Dict[int, Node] = {}
+        self.k = k
         # private
-        self.kmer_count: int = 0
-        self.kmer2idx: Dict[str, int] = {}   # keys are kmers (strings), values are ints
-        self.nodes: Dict[int, Node] = {}     # keys are indices (ints), values are Node objects
+        self.kmer_count = 0
+        self.kmer2idx = {}   # keys are kmers (strings), values are ints
+        self.nodes = {}     # keys are indices (ints), values are Node objects
 
         # build
         self._check(data_list)
         self._build(data_list)
 
-    def _check(self, data_list: List[List[str]]) -> None:
+    def _check(self, data_list: list[list[str]]) -> None:
         # check data list
         assert len(data_list) > 0
         assert self.k <= len(data_list[0][0])
 
-    def _build(self, data_list: List[List[str]]) -> None:
+    def _build(self, data_list: list[list[str]]) -> None:
         for data in data_list:
             for original in data:
                 rc = reverse_complement(original)
@@ -89,10 +98,10 @@ class DBG:
         idx2 = self._add_node(kmer2)
         self.nodes[idx1].add_child(idx2)
 
-    def _get_count(self, child: Node) -> int:
-        return self.nodes[child].get_count()
+    def _get_count(self, idx: int) -> int:
+        return self.nodes[idx].get_count()
             
-    def _get_sorted_children(self, idx: int) -> Node:
+    def _get_sorted_children(self, idx: int) -> list[int]:
         children = self.nodes[idx].get_children()
         children.sort(key=self._get_count, reverse=True)
         return children
@@ -113,29 +122,35 @@ class DBG:
         for idx in self.nodes.keys():
             self.nodes[idx].reset()
 
-    def _get_longest_path(self) -> int:
-        max_depth, max_idx = 0, None   
+    def _get_longest_path(self) -> list[int]:
+        max_depth: int = 0
+        max_idx: Optional[int] = None
         for idx in self.nodes.keys():
             depth = self._get_depth(idx)
             if depth > max_depth:
                 max_depth, max_idx = depth, idx
                 
-        path = []
+        path: list[int] = []
         while max_idx is not None:
+            # print(max_idx)
             path.append(max_idx)
             max_idx = self.nodes[max_idx].max_depth_child
+            # ensure next index is either int or None
+            if max_idx is not None and not isinstance(max_idx, Optional[int]):
+                # print(type(max_idx))
+                raise TypeError(f"Invalid max_depth_child: {max_idx}")
         return path
     
-    def _delete_path(self, path: List[int]) -> None:
+    def _delete_path(self, path: list[int]) -> None:
         for idx in path:
             del self.nodes[idx]
         path_set = set(path)
         for idx in self.nodes.keys():  
             self.nodes[idx].remove_children(path_set)
             
-    def _concat_path(self, path: List[int]) -> int:
+    def _concat_path(self, path: list[int]) -> str:
         if len(path) < 1:
-            return None
+            return ""
         concat = copy.copy(self.nodes[path[0]].kmer)
         for i in range(1, len(path)):
             concat += self.nodes[path[i]].kmer[-1]
